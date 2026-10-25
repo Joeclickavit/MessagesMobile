@@ -3676,5 +3676,80 @@ button { min-width: 0; }
   }
 })();
 </script>
+<script>
+/* Message notifications (phone). Own script: does not touch the app's code.
+   Shows a notification when a new message arrives while the app is in the background.
+   Needs the page to be running (open or backgrounded). It cannot wake a fully closed app. */
+(function () {
+  var KEY = 'msgNotifOn';
+  var started = Date.now(), prev = {}, swReg = null;
+  var btn = document.createElement('button');
+  btn.type = 'button'; btn.id = 'notif-btn'; btn.className = 'text-blue-500 text-xl';
+  btn.setAttribute('aria-label', 'Turn message notifications on or off');
+  var row = document.querySelector('#sidebar header > .flex.justify-between > .flex');
+  if (row) row.insertBefore(btn, row.firstChild);
+
+  function on() { try { return localStorage.getItem(KEY) === '1' && window.Notification && Notification.permission === 'granted'; } catch (e) { return false; } }
+  var BELL = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>';
+  var BELL_OFF = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 18.69L7.84 6.14 5.27 3.49 4 4.76l2.8 2.8v.01c-.52.99-.8 2.16-.8 3.42v5l-2 2v1h13.73l2 2L21 19.72l-1-1.03zM12 22c1.11 0 2-.89 2-2h-4c0 1.11.89 2 2 2zm6-7.32V11c0-3.08-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68c-.15.03-.29.08-.42.12L18 14.68z"/></svg>';
+  function paint() { btn.innerHTML = on() ? BELL : BELL_OFF; btn.title = on() ? 'Notifications on (tap to turn off)' : 'Turn on notifications'; }
+  function register() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(null);
+    return navigator.serviceWorker.register('sw.js').then(function () { return navigator.serviceWorker.ready; })
+      .then(function (r) { swReg = r; return r; }).catch(function () { return null; });
+  }
+  function show(title, body, tag) {
+    var opts = { body: body, tag: tag, renotify: true };
+    if (swReg && swReg.showNotification) { swReg.showNotification(title, opts).catch(function () {}); return; }
+    try { var n = new Notification(title, opts); n.onclick = function () { window.focus(); n.close(); }; } catch (e) {}
+  }
+
+  btn.addEventListener('click', function () {
+    if (!('Notification' in window)) {
+      alert('This browser cannot show notifications. On iPhone: open the site in Safari, tap Share, choose Add to Home Screen, then open it from the new icon (needs iOS 16.4 or newer).');
+      return;
+    }
+    if (on()) { try { localStorage.setItem(KEY, '0'); } catch (e) {} paint(); return; }
+    if (Notification.permission === 'denied') {
+      alert('Notifications are blocked for this site. Allow them in your phone or browser settings for this site, then tap the bell again.');
+      return;
+    }
+    Notification.requestPermission().then(function (p) {
+      if (p !== 'granted') { paint(); return; }
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+      paint();
+      register().then(function () { show('Notifications are on', 'You will be alerted about new messages.', 'msg-test'); });
+    });
+  });
+
+  // Watch the conversation list: an unread badge that goes up means a new incoming message.
+  var list = document.getElementById('convo-list');
+  function scan() {
+    var rows = list.querySelectorAll('.convo-row'), seen = {}, quiet = Date.now() - started < 6000;
+    rows.forEach(function (r) {
+      var id = r.id, dot = r.querySelector('[id^="dot-"]');
+      if (!dot) return;
+      var n = dot.classList.contains('hidden') ? 0 : (parseInt(dot.textContent, 10) || 0);
+      var muted = dot.classList.contains('bg-gray-400');
+      seen[id] = n;
+      var before = prev[id] || 0;
+      if (!quiet && n > before && !muted && on() && document.visibilityState === 'hidden') {
+        var nameEl = r.querySelector('.font-bold.text-lg');
+        var name = nameEl ? nameEl.textContent.replace(/[📌🔕]/g, '').trim() : 'Messages';
+        show(name || 'Messages', n === 1 ? 'New message' : n + ' new messages', id);
+      }
+    });
+    prev = seen;
+  }
+  if (list) new MutationObserver(scan).observe(list, { childList: true });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && swReg && swReg.getNotifications) {
+      swReg.getNotifications().then(function (a) { a.forEach(function (n) { n.close(); }); }).catch(function () {});
+    }
+  });
+  paint();
+  if (on()) register();
+})();
+</script>
 </body>
 </html>
